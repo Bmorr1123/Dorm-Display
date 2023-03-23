@@ -1,24 +1,68 @@
 import queue
 from multiprocessing import Process, Queue
+
+import numpy as np
 import psutil, os, time, math, pickle, random
+import pygame
 
 
+def render_pixels(particle_map, partition_x, partition_y, neighborhood, partition_size):
+
+    # pixels = np.zeros((partition_size, partition_size, 4))
+
+    surf = pygame.Surface((partition_size, partition_x), pygame.SRCALPHA)
+
+    nearby_particles = []
+    # Grabbing neighboring partitions
+    for x, y in neighborhood:
+        if 0 <= partition_x + x < len(particle_map) and 0 <= partition_y + y < len(particle_map[0]):
+            nearby_particles += particle_map[partition_x + x][partition_y + y]
+
+    if not nearby_particles:
+        return [partition_x, partition_y, pygame.surfarray.array2d(surf)]
+
+    # Looping over each pixel within the partition
+    for x in range(partition_size):
+        for y in range(partition_size):
+            pos = (partition_x * partition_size + x, partition_y * partition_size + y)
+
+            # Finding minimum distance from a particle
+            min_dist, closest_part = 10000, None
+            for part_pos, color in nearby_particles:
+                dist = math.sqrt((pos[0] - part_pos[0]) ** 2 + (pos[1] - part_pos[1]) ** 2)
+                # dist = abs(pos[0] - part_pos[0]) + abs(pos[1] - part_pos[1])
+                if dist < min_dist:
+                    min_dist = dist
+                    closest_part = color
+
+            intensity = 1
+            if min_dist != 0:
+                intensity = 100 / (min_dist ** 2)
+
+            surf.set_at((x, y), [int(closest_part[_]) for _ in range(3)] + [int(min(255, 255 // 8 * intensity))])
+
+    return [partition_x, partition_y, pygame.surfarray.array2d(surf)]
 
 def bloom_calculation(particle_map, nb, partition_size, send: Queue, recv: Queue):
     # print('module name:', __name__)
     # print('parent process:', os.getppid())
     # print('process id:', os.getpid())
+    running = True
 
     neighborhood = []
     for y in range(nb):
         for x in range(nb):
             neighborhood.append((x - nb//2, y - nb//2))
-    while True:
+    while running:
         try:
             while recv_data := recv.get(True, 0.25):
                 if not recv_data:
                     print("Nothing to render!")
                     continue
+
+                if recv_data == "quit":
+                    running = False
+                    break
 
                 if len(recv_data) > 2:
                     particle_map = recv_data
@@ -27,47 +71,18 @@ def bloom_calculation(particle_map, nb, partition_size, send: Queue, recv: Queue
 
                 partition_x, partition_y = recv_data
 
-                # print(f"{area_x + partition_x}x{area_y + partition_y}")
-                nearby_particles = []
-                nearby_particles += particle_map[partition_x][partition_y]
-                # Grabbing neighboring partitions
-                for x, y in neighborhood:
-                    if 0 <= partition_x + x < len(particle_map) and 0 <= partition_y + y < len(particle_map[0]):
-                        nearby_particles += particle_map[partition_x + x][partition_y + y]
+                pixels = render_pixels(particle_map, partition_x, partition_y, neighborhood, partition_size)
 
-                if not nearby_particles:
-                    send.put(f"finished_partition {partition_x}x{partition_y}x{recv.qsize()}")
-                    continue
+                send.put(pixels)
 
-                # Looping over each particle within the partition
-                for x in range(partition_size):
-                    for y in range(partition_size):
-                        pos = (partition_x * partition_size + x, partition_y * partition_size + y)
-
-                        # Finding minimum distance from a particle
-                        min_dist, closest_part = 10000, None
-                        for part_pos, color in nearby_particles:
-                            dist = math.sqrt((pos[0] - part_pos[0]) ** 2 + (pos[1] - part_pos[1]) ** 2)
-                            # dist = abs(pos[0] - part_pos[0]) + abs(pos[1] - part_pos[1])
-                            if dist < min_dist:
-                                min_dist = dist
-                                closest_part = color
-
-                        intensity = 1
-                        if min_dist != 0:
-                            intensity = 100 / (min_dist ** 2)
-
-                        color = [closest_part[_] for _ in range(3)] + [min(255, 255 // 8 * intensity)]
-                        send.put([int(pos[0]), int(pos[1]), *color])
-                send.put(f"finished_partition {partition_x}x{partition_y}x{recv.qsize()}")
-                # print(f"{int(pos.x)}x{int(pos.y)} = {color}")
-                # win.set_at((int(pos.x), int(pos.y)), (255, 0, 0))
         except queue.Empty:
             send.put("need_data")
+
+            # print(f"{int(pos.x)}x{int(pos.y)} = {color}")
+            # win.set_at((int(pos.x), int(pos.y)), (255, 0, 0))
     # print("Done!")
 
-
-if __name__ == '__main__':
+def main():
     import pygame
     particle_map = [
         [[], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [],
@@ -407,7 +422,7 @@ if __name__ == '__main__':
 
     width, height = 1280, 720
     partition_size = 20
-    nb_size = 9
+    nb_size = 5
 
     partitions_wide, partitions_tall = width // partition_size, height // partition_size
     print(f"{partitions_wide}x{partitions_tall}")
@@ -453,7 +468,7 @@ if __name__ == '__main__':
         to_draw = []
 
         last_size = 0
-        while (data := recv.get()) and todo:
+        while (data := recv.get()) is not None and todo:
             # print("received data")
             events = pygame.event.get()
             for event in events:
@@ -473,7 +488,16 @@ if __name__ == '__main__':
                     for partition in range(min(100, len(todo))):
                         send.put(todo[random.randint(0, len(todo) - 1)])
             else:
-                surf.set_at(data[:2], data[2:])
+                x, y, arr= data
+                print(x, y, len(arr))
+                if [x, y] in todo:
+                    todo.remove([x, y])
+
+                surf.blit(pygame.surfarray.make_surface(arr), (x * partition_size, y * partition_size))
+
+                win.fill((0, 0, 0))
+                win.blit(surf, (0, 0))
+                pygame.display.update()
                 # to_draw.append(data)
 
         print(f"Total Time: {time.time() - start_time}s")
@@ -482,18 +506,19 @@ if __name__ == '__main__':
         #     surf.set_at(data[:2], data[2:])
 
         win.fill((0, 0, 0))
+        print(pygame.surfarray.pixels3d(surf))
         win.blit(surf, (0, 0))
         pygame.display.update()
         # win.blit(surf, (0, 0))
         # pygame.display.update()
         print("Finished")
 
-    # render(particle_map)
+    render(particle_map)
 
-    for num in range(35):
-        file = open(f"../bins/particles_{num:06}.dat", "rb")
-        cp = pickle.load(file)
-        render(cp)
+    # for num in range(35):
+    #     file = open(f"../bins/particles_{num:06}.dat", "rb")
+    #     cp = pickle.load(file)
+    #     render(cp)
 
     running = True
     while running:
@@ -502,11 +527,18 @@ if __name__ == '__main__':
         for event in events:
             if event.type == pygame.QUIT:
                 running = False
-            running = False
+
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
                     running = False
 
+    for i in range(len(processes)):
+        send.put("quit")
+
     for process in processes:
-        print("Joining!")
-        process.join()
+        print("Terminating!")
+        process.terminate()
+
+
+if __name__ == '__main__':
+    main()

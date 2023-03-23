@@ -4,6 +4,9 @@ import os, time
 
 import pygame, math, random, pygame.gfxdraw
 from random import randint, random
+
+pygame.init()
+
 from physics.particle import *
 from physics.bouncer import *
 from pprint import pprint as pp
@@ -12,25 +15,28 @@ from pprint import pprint as pp
 from PIL import Image
 import glob
 
-# Pygame setup and application stuff
-game_name = "DVD Logo"
-pygame.init()
-display, clock = pygame.display.Info(), pygame.time.Clock()
-width, height = display.current_w, display.current_h
-center_x, center_y = width // 2, height // 2
-win = pygame.display.set_mode((width, height), pygame.HWSURFACE | pygame.DOUBLEBUF)
-pygame.display.set_caption(game_name)
-
 
 # Functions
 def screensaver():
+    # Pygame setup and application stuff
+    game_name = "DVD Logo"
+    display, clock = pygame.display.Info(), pygame.time.Clock()
+    width, height = display.current_w, display.current_h
+    center_x, center_y = width // 2, height // 2
+    win = pygame.display.set_mode((width, height))
+    pygame.display.set_caption(game_name)
+
     # This is stupid
+    texture_surf = pygame.Surface((width, height))
+
     # Setting up loop variables
     running, paused, total_time, frames = True, False, 0, 0
     deltas = [.1 for _ in range(10)]
 
     # Load data
     particles = []
+
+    Bouncer.width, Bouncer.height = width, height
     bouncer = Bouncer((center_x, center_y), (0, 0), "uah_logo.png")
     velocity = (Vector2(width, height) - bouncer.get_br_corner()) / 5
 
@@ -162,28 +168,38 @@ def screensaver():
 
         # Drawing
         render_time = time.time()
-        win.fill((0, 0, 50))
-        win.blit(bouncer.surf, bouncer.position)
+
+        texture_surf.fill((0, 0, 50))
+        texture_surf.blit(bouncer.surf, bouncer.position)
+
+        bloom_surfs = []
 
         for particle in particles:
             # for i in range(10):
-            #     win.blit(particle.color_generator.get_bloom(i/10), particle.position + (i * 25, 0))
+            #     texture_surf.blit(particle.color_generator.get_bloom(i/10), particle.position + (i * 25, 0))
             bloom = particle.get_bloom()
             if bloom:
-                win.blit(bloom, particle.position - Vector2(bloom.get_size()) / 2)
+                bloom_surfs.append((bloom, particle.position - Vector2(bloom.get_size()) / 2))
             else:
-                win.blit(particle.surf, particle.position - Vector2(particle.size) / 2)
+                texture_surf.blit(particle.surf, particle.position - Vector2(particle.size) / 2)
 
+        texture_surf.blits(bloom_surfs, False)
 
-        win.blit(surf.generate_text(f"Particle count: {len(particles)}\n"
-                                    f"fps: {1 / max(deltas):.2f} < {1 / avg_delta:.2f} < {1 / min(deltas):.2f}\n"
-                                    f"render time: {time.time() - render_time:03.3f}",
-                                    spacing=15), (0, 0))
+        texture_surf.blit(
+            surf.generate_text(
+                f"Particle count: {len(particles)}\n"
+                f"fps: {1 / max(deltas):.2f} < {1 / avg_delta:.2f} < {1 / min(deltas):.2f}\n"
+                f"render time: {time.time() - render_time:03.3f}",
+                spacing=15
+            ),
+            (0, 0)
+        )
 
         if not paused and recording:
-            pygame.image.save(win, f"recordings/frames/frame_{frames:010}.png")
+            pygame.image.save(texture_surf, f"recordings/frames/frame_{frames:010}.png")
             frames += 1
 
+        win.blit(texture_surf, (0, 0))
         pygame.display.update()
 
     return -1
